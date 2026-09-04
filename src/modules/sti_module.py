@@ -155,6 +155,7 @@ def transform_data(data):
         # print(df.to_string())
 
         df = df[["Veiculo", "Data", "Velocidade", "Status", "Local"]]
+        df = df[df["Veiculo"] != "MXT-15175"]
 
         df["Veiculo"] = df["Veiculo"].str[:3] + " " + df["Veiculo"].str[3:]
         df["Veiculo"] = df["Veiculo"].str.rstrip("-")
