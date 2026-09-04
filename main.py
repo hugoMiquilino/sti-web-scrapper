@@ -3,6 +3,8 @@ from queue import Queue
 from time import sleep
 import pandas as pd
 import logging
+import traceback
+import sys
 
 
 from src.modules import sti_module, plan_module, request_module
@@ -18,15 +20,33 @@ def worker():
         try:
 
             logger.info("Iniciando novo ciclo")
-
+            
             sti_df = sti_module()
-            logger.info("Dados STI carregados")
+            # sti_df.to_csv("sti.csv", index=False)
+            logger.info("Dados STI carregados.")
+            
+            try:
+                plan_df = plan_module()
+                # plan_df.to_csv("plan.csv")
+                if plan_df is not None:
+                    logger.info("Dados PLAN carregados.")
+            except Exception:
+                logger.warning("Erro ao coletar dados da Planilha.")
 
-            plan_df = plan_module()
-            logger.info("Dados PLAN carregados")
-
-            logger.info("Realizando merge dos dados")
-            df = pd.merge(sti_df, plan_df, on="Veiculo", how="outer")
+            if sti_df is not None and plan_df is not None:
+                df = pd.merge(plan_df, sti_df, on="Veiculo", how="outer")
+                df.to_csv("r.csv", index=False)
+                logger.info("Realizando merge dos dados")
+            elif sti_df is not None:
+                df = sti_df
+                logger.info("Apenas dados da STI coletados.")
+            elif plan_df is not None:
+                df = plan_df
+                logger.info("Apenas dados da tabela coletados.")
+            else:
+                logger.warning("Nenhum dado coletado. Aguardando próximo ciclo.")
+                sleep(10)
+                continue
 
             logger.info("Iniciando envio dos dados")
             request_module(df)

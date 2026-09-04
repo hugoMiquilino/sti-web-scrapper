@@ -29,8 +29,10 @@ def load_json(file_path):
 def setup():
 
     chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("headless=new")
     chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
     chrome_options.add_experimental_option("detach", True)
     chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
     chrome_options.page_load_strategy = "eager"
@@ -44,89 +46,81 @@ def teardown(driver):
     driver.quit()
 
 
-def get_working_url(driver, timeout=60):
-
-    STI_URLS = [
-        "https://svc1.stirastreamento.com.br/Portal/Login",
-        "https://serverca1.serveirc.com/Portal/Login",
-        "https://svc2.stirastreamento.com.br/portal/Login",
-    ]
-
-    for url in STI_URLS:
-        try:
-            driver.set_page_load_timeout(timeout)
-            driver.get(url)
-
-            # valida algo que SEMPRE existe na tela de login
-            driver.find_element(By.ID, "usuario")
-
-            logger.info(f"[STI] URL válida: {url}")
-            return url
-
-        except (WebDriverException, TimeoutException):
-            logger.warning(f"[STI] URL indisponível: {url}")
-            continue
-
-    raise RuntimeError("Nenhuma URL da STI está disponível no momento")
-
-
 def collector():
 
-    driver = setup()
+    STI_URLS = [
+        "https://svc1.stirastreamento.com.br/portal/Login", # site indisponível
+        "https://svc2.stirastreamento.com.br/portal/Login",
+        "https://serverca1.serveirc.com/Portal/Login",
+    ]
 
-    load_dotenv()
+    load_dotenv(resource_path(".env"))
 
     user = os.getenv("USER")
     passwd = os.getenv("PASSWD")
 
-    try:
-        wait = WebDriverWait(driver, 30)
+    if not user or not passwd:
+        logger.warning("[STI] Variáveis de ambiente USER/PASSWD não encontradas. Verifique o arquivo .env ou as variáveis do sistema.")
+        return None
 
-        url = get_working_url(driver)
-        
-        driver.get(url)
-        wait.until(EC.presence_of_element_located((By.ID, "usuario")))
-        driver.find_element(By.XPATH, '//*[@id="usuario"]').send_keys(user), sleep(0.2)
-        driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(passwd, Keys.RETURN)
+    for url in STI_URLS:
+        driver = setup()
+        try:
+            wait = WebDriverWait(driver, 60)
+            
+            driver.get(url)
+            
+            wait.until(EC.presence_of_element_located((By.ID, "usuario")))
+            driver.find_element(By.XPATH, '//*[@id="usuario"]').send_keys(user), sleep(0.2)
+            driver.find_element(By.XPATH, '//*[@id="senha"]').send_keys(passwd, Keys.RETURN)
 
-        wait.until(EC.presence_of_element_located((By.CLASS_NAME, "shortcut")))
-        driver.find_element(
-            By.XPATH, "/html/body/div[6]/div[1]/div/div/div[1]/div/div[2]/div/a[1]"
-        ).click()
+            wait.until(EC.presence_of_element_located((By.CLASS_NAME, "shortcut")))
+            driver.find_element(
+                By.XPATH, "/html/body/div[6]/div[1]/div/div/div[1]/div/div[2]/div/a[1]"
+            ).click()
 
-        wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div[4]/div/div/div[2]/div[2]/div/table/tbody/tr[5]")))
+            wait.until(EC.presence_of_element_located((By.XPATH, "/html/body/div[4]/div/div/div[2]/div[2]/div/table/tbody/tr[5]")))
 
-        Select(driver.find_element(By.ID, "pageLength")).select_by_visible_text("100")
+            Select(driver.find_element(By.ID, "pageLength")).select_by_visible_text("100")
 
-        sleep(.5)
+            sleep(.5)
 
-        complete_table = []
-        rows = driver.find_elements(
-            By.XPATH, "/html/body/div[4]/div/div/div[2]/div[2]/div/table/tbody/tr"
-        )
-        for row in rows:
-            columns = [col.text.strip() for col in row.find_elements(By.XPATH, ".//td")]
+            complete_table = []
+            rows = driver.find_elements(
+                By.XPATH, "/html/body/div[4]/div/div/div[2]/div[2]/div/table/tbody/tr"
+            )
+            for row in rows:
+                columns = [col.text.strip() for col in row.find_elements(By.XPATH, ".//td")]
 
-            if len(columns) > 10:
-                try:
-                    lg_element = row.find_element(By.XPATH, ".//td[11]/img")
-                    alt_value = lg_element.get_attribute("alt")
+                if len(columns) > 10:
+                    try:
+                        lg_element = row.find_element(By.XPATH, ".//td[11]/img")
+                        alt_value = lg_element.get_attribute("alt")
 
-                    columns[10] = (
-                        "\U0001f7e2" if alt_value == "Ligada" else "\U0001f518"
-                    )
-                except Exception:
-                    columns[10] = "\U0001f518"
+                        columns[10] = (
+                            "\U0001f7e2" if alt_value == "Ligada" else "\U0001f518"
+                        )
+                    except Exception:
+                        columns[10] = "\U0001f518"
 
-            complete_table.append(columns)
+                complete_table.append(columns)
 
-        return complete_table
+            logger.info(f"[STI] Coletando dados em: {url}")
+            teardown(driver)
+            return complete_table
 
-    except Exception as e:
-        logger.warning(f"Falha ao extrair dados.")
+        except (WebDriverException, TimeoutException) as e:
+            logger.warning(f"[STI] Falha ao acessar {url}: {e}. Tentando próxima URL...")
+        except Exception as e:
+            logger.exception(f"[STI] Erro ao processar dados de {url}: {e}")
+        finally:
+            try:
+                teardown(driver)
+            except Exception:
+                pass
 
-    finally:
-        teardown(driver)
+    logger.warning(f"[STI] Nenhuma URL conseguiu coletar dados válidos")
+    return None
 
 
 def transform_data(data):
@@ -216,6 +210,9 @@ def converter(df, conversion_dict):
 
 def sti_module():
     df = collector()
+    
+    if df is None:
+        return None
+    
     df = transform_data(df)
-
     return df
